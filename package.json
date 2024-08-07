@@ -1,0 +1,17 @@
+{
+  "name": "contrast-chain",
+  "version": "1.0.0",
+  "description": "The ultra lightweight L1.",
+  "main": "test-NodeJS-FrontES6.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "Doc. Pink Parrot",
+  "license": "ISC",
+  "dependencies": {
+    "argon2": "^0.40.3",
+    "express": "^4.19.2",
+    "path": "^0.12.7"
+  }
+}
