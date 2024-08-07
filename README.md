@@ -1,2 +1,2 @@
-# LinkVault-Chain-Alpha
-The first version of the LinkVault's blockchain.
+# Contrast Chain
+The ultra lightweight L1
