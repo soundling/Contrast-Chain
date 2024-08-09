@@ -1,19 +1,16 @@
-const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
-
 import ed25519 from './noble-ed25519-03-2024.mjs';
 import utils from './utils.mjs';
-const cryptoLib = isNode ? crypto : window.crypto;
-let argon2;
-if (isNode) {
-    argon2 = await import('argon2');
-    argon2.limits.timeCost.min = 1;
-} else {
-    const argon2Import = await import('./argon2-ES6.min.mjs');
-    argon2 = argon2Import.default;
-    window.argon2 = argon2;
-}
 
-//#region - Argon2 Standardization
+const addressPrefix = ["C"];
+const argon2_POW_Params = {
+    time: 1,
+    mem: 2**18,
+    parallelism: 1,
+    type: 2,
+    hashLen: 32,
+};
+
+//#region - Argon2 Standardization functions
 function createArgon2Params(pass = "averylongpassword123456", salt = "saltsaltsaltsaltsalt", time = 1, mem = 2**10, parallelism = 1, type = 2, hashLen = 32) {
     return {
         pass,
@@ -25,7 +22,7 @@ function createArgon2Params(pass = "averylongpassword123456", salt = "saltsaltsa
         hashLength: hashLen,
         parallelism,
         type,
-        salt: isNode ? Buffer.from(salt) : salt,
+        salt: utils.isNode ? Buffer.from(salt) : salt,
     };
 }
 function standardizeArgon2FromEncoded(encoded = '$argon2id$v=19$m=1048576,t=1,p=1$c2FsdHNhbHRzYWx0c2FsdHNhbHQ$UamPN/XTTX4quPewQNw4/s3y1JJeS22cRroh5l7OTMM') {
@@ -34,11 +31,15 @@ function standardizeArgon2FromEncoded(encoded = '$argon2id$v=19$m=1048576,t=1,p=
     const hash = utils.convert.base64.toUint8Array(base64);
     const hex = utils.convert.uint8Array.toHex(hash);
     const bitsArray = utils.convert.hex.toBits(hex);
+    if (!bitsArray) { return false; }
 
     return { encoded, hash, hex, bitsArray };
 }
+//#endregion ----------------------
+
+//#region -  Hash functions
 /**
- * This function hashes a password using Argon2.
+ * This function hashes a password using Argon2
  * @param {string} pass - Password to hash
  * @param {string} salt - Salt to use for the hash
  * @param {number} time - Time cost in iterations
@@ -49,77 +50,167 @@ function standardizeArgon2FromEncoded(encoded = '$argon2id$v=19$m=1048576,t=1,p=
  */
 async function argon2Hash(pass, salt, time = 1, mem = 2**10, parallelism = 1, type = 2, hashLen = 32) {
     const params = createArgon2Params(pass, salt, time, mem, parallelism, type, hashLen);
-    const hashResult = isNode ? await argon2.hash(pass, params) : await argon2.hash(params);
+    const hashResult = utils.isNode ? await utils.argon2.hash(pass, params) : await utils.argon2.hash(params);
+    //const hashResult = utils.isNode ? await utils.argon2.hash(pass, params) : await window.argon2.hash(params);
     if (!hashResult) { return false; }
 
     const encoded = hashResult.encoded ? hashResult.encoded : hashResult;
     const result = standardizeArgon2FromEncoded(encoded);
+    if (!result) { return false; }
 
     return result;
 }
+async function SHA256Hash(message) {
+    try {
+        const messageUint8 = utils.convert.string.toUint8Array(message);
+        const arrayBuffer = await utils.cryptoLib.subtle.digest('SHA-256', messageUint8);
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const hashHex = utils.convert.uint8Array.toHex(uint8Array);
+        return hashHex;
+    } catch (error) {
+        console.error(error);
+    }
+
+    return false;
+}
 //#endregion ----------------------
 
+//#region - Asymetric crypto functions
 /** @param {string} privKeyHex - Hexadecimal representation of the private key */
 async function generateKeyPairFromHash(privKeyHex) {
     if (privKeyHex.length !== 64) { console.error('Hash must be 32 bytes long (hex: 64 chars)'); return false; }
     
     // Calculer la clé publique à partir de la clé privée
     const publicKey = await ed25519.getPublicKeyAsync(privKeyHex);
-    const pubKeyHex = utils.uint8ArrayToHex(publicKey);
+    const pubKeyHex = utils.convert.uint8Array.toHex(publicKey);
   
     return { privKeyHex, pubKeyHex };
+}
+/** 
+ * @param {string} messageHex - Message to sign
+ * @param {string} privKeyHex - Hexadecimal representation of the private key
+ * @param {string} pubKeyHex - Hexadecimal representation of the public key
+ */
+async function signMessage(messageHex, privKeyHex, pubKeyHex) {
+    const result = { isValid: false, signature: '', error: '' };
+    if (privKeyHex.length !== 64) { result.error = 'Hash must be 32 bytes long (hex: 64 chars)'; return result; }
+    
+    const signature = await ed25519.signAsync(messageHex, privKeyHex);
+    if (!signature) { result.error = 'Failed to sign the message'; return result; }
+
+    result.isValid = await ed25519.verifyAsync(signature, messageHex, pubKeyHex);
+    if (!result.isValid) { result.error = 'Failed to verify the signature'; return result; }
+
+    result.signature = signature;
+    return result;
+}
+/**
+ * @param {string} signature 
+ * @param {string} messageHex 
+ * @param {string} pubKeyHex 
+ * @returns 
+ */
+async function verifySignature(signature, messageHex, pubKeyHex) {
+    const isValid = await ed25519.verifyAsync(signature, messageHex, pubKeyHex);
+    return isValid;
+}
+//#endregion ----------------------
+
+//#region - Address functions
+/**
+ * @param {string} address - Address to verify (base58)
+ * @param {string} pubKeyHex - Public key to derive the address from
+ */
+async function verifyAddressFromPubKey(address, pubKeyHex) {
+    const firstCharTest = validateAddress(address);
+    if (!firstCharTest.isValidAddress) { return { isValid: false, error: firstCharTest.message }; }
+
+    const { isValidAddress, addressBase58, firstChar } = await deriveAddress(pubKeyHex);
+    if (!isValidAddress) { return { isValid: false, error: 'Failed to derive the address' }; }
+
+    const isValid = addressBase58 === address;
+
+    return { isValid, error: '' };
 }
 /** 
 * @param {number} addressIndex - Index of the address to derive
 * @param {string} pubKeyHex - Public key to derive the address from
 */
-async function deriveAddress(addressIndex, pubKeyHex) {
-    if (typeof addressIndex !== 'number') { console.error('Address index must be a number'); return false; }
-    if (addressIndex > 3363) { console.error('Cannot derive more than 3363 addresses per pubKey'); return false; }
+async function deriveAddress(pubKeyHex) {
+    //const startTimestamp = Date.now();
+    const hex128 = pubKeyHex.substring(0, 32);
+    const salt = pubKeyHex.substring(32, 64);
 
-    const prefix = "BCE";
-    const addressIndexHex = addressIndex.toString(16).padStart(4, '0');
-
-    const pubKeyUint8Array = utils.hexToUint8Array(pubKeyHex + addressIndexHex);
-    const hash = await cryptoLib.subtle.digest('SHA-256', pubKeyUint8Array);
-    const hashHex = utils.uint8ArrayToHex(new Uint8Array(hash));
-    const hashBase58 = utils.hexToBase58(hashHex);
+    const argon2hash = await argon2Hash(hex128, salt, 1, 2**12, 1, 2, 16);
+    if (!argon2hash) {
+        console.error('Failed to hash the SHA-512 address');
+        return { isValidAddress: false, addressBase58: '', firstChar: '' };
+    }
     
-    const addressArray = [prefix, hashBase58];
-    let address = addressArray.join('').substring(0, 42);
-    address += await getChecksumFromAddress(address);
+    const hex = argon2hash.hex;
+    const addressBase58 = utils.convert.hex.toBase58(hex).substring(0, 20);
+    const { isValidAddress, firstChar } = validateAddress(addressBase58);
 
-    if (!await validateAddress(address)) { console.error('Address is not valid'); return false; }
-
-    return address;
+    //const endTimestamp = Date.now();
+    //const duration = endTimestamp - startTimestamp;
+    return { isValidAddress, addressBase58, firstChar };
 }
-/** 
- * @param {string} address - Address to get the checksum from
- * @returns {promise<string>} - Checksum base58 (2 chars)
- */
-async function getChecksumFromAddress(address) {
-    const addressUint8Array = utils.hexToUint8Array(address);
-    const checksum = await cryptoLib.subtle.digest('SHA-256', addressUint8Array);
-    const checksumHex = utils.uint8ArrayToHex(new Uint8Array(checksum));
-    const checksumBase58 = utils.hexToBase58(checksumHex);
+/** @param {string} addressBase58 - Address to validate */
+function validateAddress(addressBase58) {
+    if (typeof addressBase58 !== 'string') { return { isValidAddress: false, message: 'Invalid address type !== string', error: true }; }
+    if (addressBase58.length !== 20) { return { isValidAddress: false, message: 'Invalid address length !== 20', error: true }; }
 
-    return checksumBase58.substring(0, 2);
+    const firstChar = addressBase58.substring(0, 1);
+    if (addressPrefix.indexOf(firstChar) === -1) {
+        return { isValidAddress: false, message: `Invalid address firstChar: ${firstChar}`, error: false };
+    }
+
+    return { isValidAddress: true, firstChar };
 }
-async function validateAddress(address) {
-    const prefix = address.substring(0, 3);
-    if (prefix !== 'BCE') { return false; };
+//#endregion ----------------------
 
-    const checksum = address.substring(address.length - 2); // Last 2 chars
-    
-    const addressWithoutChecksum = address.substring(0, 42);
-    const calculatedChecksum = await getChecksumFromAddress(addressWithoutChecksum);
+//#region - mining functions
+async function getBlockHash(blockSignature = '', nonce = '') {
+    const { time, mem, parallelism, type, hashLen } = argon2_POW_Params;
+    const newBlockHash = await argon2Hash(blockSignature, nonce, time, mem, parallelism, type, hashLen);
+    if (!newBlockHash) { return false; }
 
-    return checksum === calculatedChecksum;
+    return newBlockHash;
 }
+function verifyBlockHash(HashBitsAsString = '', difficulty = 1) {
+    if (typeof HashBitsAsString !== 'string') { return { isValid: false, error: 'Invalid HashBitsAsString' }; }
+    if (typeof difficulty !== 'number') { return { isValid: false, error: 'Invalid difficulty type' }; }
+
+    if (difficulty < 1) { return { isValid: false, error: 'Invalid difficulty < 1' }; }
+    if (difficulty > HashBitsAsString.length) { return { isValid: false, error: 'Invalid difficulty > HashBitsAsString.length' }; }
+
+    const target = '0'.repeat(difficulty);
+    const isValid = HashBitsAsString.startsWith(target);
+
+    return { isValid, error: '' };
+}
+function generateRandomNonce(length) {
+    const Uint8 = new Uint8Array(length);
+    crypto.getRandomValues(Uint8);
+
+    const Hex = Array.from(Uint8).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    return { Uint8, Hex };
+}
+//#endregion ----------------------
 
 export default {
-    cryptoLib,
     argon2Hash,
+    SHA256Hash,
+
     generateKeyPairFromHash,
-    deriveAddress
+    signMessage,
+
+    deriveAddress,
+    validateAddress,
+    
+    getBlockHash,
+    verifyBlockHash,
+    generateRandomNonce,
+    argon2_POW_Params
 };
