@@ -42,8 +42,8 @@ async function test() {
     if (!accounts) { console.error('Failed to derive addresses.'); return; }
     timings.deriveAccounts = Date.now() - timings.checkPoint; timings.checkPoint = Date.now();
     
-    console.log('account0:' + accounts[0].address);
-
+    console.log('account0 address: ' + accounts[0].address);
+    
     console.log(
 `__Timings -----------------------
 | -- walletRestore: ${timings.walletRestore}ms

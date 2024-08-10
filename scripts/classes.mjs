@@ -253,6 +253,9 @@ export class FullNode {
     static load() {
         const chain = storage.loadBlockchainLocally();
         const node = new FullNode(chain);
+        const blocksData = node.#getBlocksMiningData();
+        storage.saveBlocksDataLocally(blocksData);
+
         node.blockCandidate = node.#createBlockCandidate();
 
         return node;
@@ -288,18 +291,22 @@ export class FullNode {
         for (let i = 0; i < NbBlocks; i++) {
             sum += blocks[i].timestamp;
         }*/
-        const NbBlocks = Math.min(this.chain.length, this.settings.blocksBeforeAdjustment);
+        let NbBlocks = Math.min(this.chain.length, this.settings.blocksBeforeAdjustment);
         const olderBlock = this.chain[this.chain.length - NbBlocks];
         const newerBlock = this.chain[this.chain.length - 1];
         const sum = newerBlock.timestamp - olderBlock.timestamp
 
-        return sum / NbBlocks;
+        return sum / (NbBlocks - 1);
     }
     // Private methods
     /** @returns {number} - New difficulty */
     #difficultyAdjustment(logs = true) {
         const blockIndex = this.chain[this.chain.length - 1].index;
         const difficulty = this.chain[this.chain.length - 1].difficulty;
+        
+        if (typeof difficulty !== 'number') { console.error('Invalid difficulty'); return 1; }
+        if (difficulty < 1) { console.error('Invalid difficulty < 1'); return 1; }
+
         if (typeof blockIndex !== 'number') { console.error('Invalid blockIndex'); return difficulty; }
         if (blockIndex === 0) { return difficulty; }
 
@@ -307,22 +314,22 @@ export class FullNode {
         if (modulus !== 0) { return difficulty; }
 
         const averageBlockTimeMS = this.getAverageBlockTime();
-        const deviation = averageBlockTimeMS - this.settings.targetBlockTime;
-        const deviationPercentage = Math.abs(deviation) / this.settings.targetBlockTime * 100;
+        const deviation = 1 - (averageBlockTimeMS / this.settings.targetBlockTime);
+        const deviationPercentage = deviation * 100; // over zero = too fast / under zero = too slow
 
         if (logs) {
             console.log(`BlockIndex: ${blockIndex} | Average block time: ${Math.round(averageBlockTimeMS)}ms`);
-            console.log(`Deviation: ${Math.round(deviation)}ms | Deviation percentage: ${deviationPercentage.toFixed(2)}%`);
+            console.log(`Deviation: ${deviation.toFixed(4)} | Deviation percentage: ${deviationPercentage.toFixed(2)}%`);
         }
 
-        if (deviationPercentage < this.settings.deviationThreshold) { return difficulty; }
-
-        const difficultyAdjustment = deviation > 0 ? -1 : deviation < 0 ? 1 : 0;
-        const newDifficulty = difficulty + difficultyAdjustment;
+        const diffAdjustment = Math.floor(Math.abs(deviationPercentage) / this.settings.thresholdPerDiffIncrement);
+        const capedDiffIncrement = Math.min(diffAdjustment, this.settings.maxDiffIncrementPerAdjustment);
+        const diffIncrement = deviation > 0 ? capedDiffIncrement : -capedDiffIncrement;
+        const newDifficulty = Math.max(difficulty + diffIncrement, 1); // cap at 1 minimum
         this.chain[this.chain.length - 1].difficulty = newDifficulty;
 
         if (logs) {
-            const state = difficultyAdjustment === 0 ? 'maintained' : difficultyAdjustment > 0 ? 'increased' : 'decreased';
+            const state = diffIncrement === 0 ? 'maintained' : diffIncrement > 0 ? 'increased' : 'decreased';
             console.log(`Difficulty ${state} ${state === 'maintained' ? 'at' : 'to'}: ${newDifficulty}`);
         }
 
@@ -372,6 +379,25 @@ export class FullNode {
         const block = this.chain[blockIndex];
         return storage.saveBlockLocally(block);
     }
+    #getBlocksMiningData() {
+        const blocksData = [];
+
+        for (let i = 0; i < this.chain.length; i++) {
+            const block = this.chain[i];
+            const blockReward = block.getCoinbaseBlockReward();
+            if (!blockReward.success) { console.error(`Failed to get block reward for block ${block.index}`); return false; }
+
+            blocksData.push({ 
+                blockIndex: block.index,
+                blockReward: blockReward.blockReward,
+                timestamp: block.timestamp,
+                difficulty: block.difficulty,
+                timeBetweenBlocks: i === 0 ? 0 : block.timestamp - this.chain[i - 1].timestamp
+            });
+        }
+
+        return blocksData;
+    }
 }
 export class LightNode {
     
@@ -420,8 +446,9 @@ export class Miner {
         const { success, hashBitsString, hashHex, message } = await this.blockCandidate.calculateHash(nonce.Hex);
         if (!success) { return { success: false, message: message ? message : 'Invalid hash' }; }
 
-        const verifResult = conCrypto.verifyBlockHash(hashBitsString, blockCandidate.difficulty);
-        if (verifResult.isValid) { console.log(`POW -> ${blockCandidate.index}: ${hashBitsString.slice(0, blockCandidate.difficulty + 1)}`); }
+        const difficulty = blockCandidate.difficulty;
+        const verifResult = conCrypto.verifyBlockHash(hashBitsString, difficulty);
+        if (verifResult.isValid) { console.log(`POW -> [index:${blockCandidate.index}] = ${hashBitsString.slice(0, Math.floor(difficulty / 16))} - ${verifResult.next5BitsInt} >= ${verifResult.adjust}`); }
     
         return { finder: this.minerAddress, hashTime, nonce: nonce.Hex, hashHex, isValid: verifResult.isValid };
     }

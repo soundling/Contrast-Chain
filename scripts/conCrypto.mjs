@@ -177,17 +177,30 @@ async function getBlockHash(blockSignature = '', nonce = '') {
 
     return newBlockHash;
 }
+function getDiff(difficulty = 1) {
+    const zeros = Math.floor(difficulty / 16);
+    const adjust = difficulty % 16;
+    return { zeros, adjust };
+}
 function verifyBlockHash(HashBitsAsString = '', difficulty = 1) {
     if (typeof HashBitsAsString !== 'string') { return { isValid: false, error: 'Invalid HashBitsAsString' }; }
     if (typeof difficulty !== 'number') { return { isValid: false, error: 'Invalid difficulty type' }; }
 
     if (difficulty < 1) { return { isValid: false, error: 'Invalid difficulty < 1' }; }
     if (difficulty > HashBitsAsString.length) { return { isValid: false, error: 'Invalid difficulty > HashBitsAsString.length' }; }
+    
+    const { zeros, adjust } = getDiff(difficulty);
 
-    const target = '0'.repeat(difficulty);
-    const isValid = HashBitsAsString.startsWith(target);
+    const target = '0'.repeat(zeros);
+    const condition1 = HashBitsAsString.startsWith(target);
+    if (!condition1) { return { isValid: false, error: 'Invalid condition1' }; }
 
-    return { isValid, error: '' };
+    const next5Bits = HashBitsAsString.substring(zeros, zeros + 5);
+    const next5BitsInt = parseInt(next5Bits, 2);
+    const condition2 = next5BitsInt >= adjust;
+    const isValid = condition1 && condition2;
+
+    return { isValid, error: '', next5BitsInt, adjust };
 }
 function generateRandomNonce(length) {
     const Uint8 = new Uint8Array(length);

@@ -23,8 +23,9 @@ async function getArgon2Lib() {
 const argon2Lib = await getArgon2Lib();
 
 const blockchainSettings = {
-    targetBlockTime: 120000, // 2 min
-    deviationThreshold: 50, // 50%
+    targetBlockTime: 2000, // 2 sec ||| // 120000, // 2 min
+    thresholdPerDiffIncrement: 10, // meaning 10% threshold for 1 diff point
+    maxDiffIncrementPerAdjustment: 8, // 8 diff points = 50% of diff
     blocksBeforeAdjustment: 144, // ~5h
 
     blockReward: 25600,
@@ -34,8 +35,9 @@ const blockchainSettings = {
 };
 /*const blockchainSettings = { // Not used ATM
     targetBlockTime: 600000, // 10 min
-    deviationThreshold: 50, // 50%
-    blocksBeforeAdjustment: 144, // 144; 24h
+    thresholdPerDiffIncrement: 10, // meaning 10% threshold for 1 diff point
+    maxDiffIncrementPerAdjustment: 8, // 8 diff points = 50% of diff
+    blocksBeforeAdjustment: 144, // ~24h
 
     blockReward: 25600,
     minBlockReward: 100,

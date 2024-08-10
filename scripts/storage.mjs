@@ -59,10 +59,23 @@ function saveBlockLocally(block) {
 
     return result;
 }
+function saveBlocksDataLocally(blocksData) {
+    const blocksDataPath = etc.path.join(powDataPath, 'blocksData.csv');
+    const blocksDataHeader = 'blockIndex,blockReward,timestamp,difficulty,timeBetweenBlocks\n';
+    const blocksDataLines = blocksData.map(data => {
+        return `${data.blockIndex},${data.blockReward},${data.timestamp},${data.difficulty},${data.timeBetweenBlocks}`;
+    }).join('\n');
+    const blocksDataContent = blocksDataHeader + blocksDataLines;
+
+    etc.fs.writeFileSync(blocksDataPath, blocksDataContent, 'utf8');
+   
+    return { success: true, message: 'Blocks data saved' };
+}
 
 const storage = {
     loadBlockchainLocally,
     saveBlockLocally,
+    saveBlocksDataLocally
 };
 
 export default storage;
