@@ -1,3 +1,4 @@
+'use strict';
 /*! noble-ed25519 - MIT License (c) 2019 Paul Miller (paulmillr.com) */
 const P = 2n ** 255n - 19n; // ed25519 is twisted edwards curve
 const N = 2n ** 252n + 27742317777372353535851937790883648493n; // curve's (group) order

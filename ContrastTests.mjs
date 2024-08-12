@@ -1,4 +1,5 @@
-import contrast from './scripts/contrast.mjs';
+'use strict';
+import contrast from './src/contrast.mjs';
 
 /** @param {string} minerAddress */
 async function nodeSpecificTest(minerAddress) {
@@ -13,9 +14,9 @@ async function nodeSpecificTest(minerAddress) {
 
         if (powProposal && powProposal.isValid) {
             // verify the block like a FullNode
-            const { success, message, newBlockCandidate } = await node.blockProposal(powProposal.nonce, powProposal.hashTime);
+            const { success, message } = await node.blockProposal(powProposal.nonce, powProposal.hashTime);
             if (success) {
-                if (powProposal.hashHex !== newBlockCandidate.prevHash) {
+                if (powProposal.hashHex !== node.blockCandidate.prevHash) {
                     console.error('Fatal error: Block proposal accepted but prevHash does not match.');
                 }
                 // console.log('Block proposal accepted!');
@@ -34,24 +35,25 @@ async function test() {
     const nbOfAccounts = 2;
     const timings = { walletRestore: 0, deriveAccounts: 0, startTime: Date.now(), checkPoint: Date.now() };
 
-    const wallet = await contrast.Wallet.restore();
+    const wallet = await contrast.Wallet.restore("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00");
     if (!wallet) { console.error('Failed to restore wallet.'); return; }
     timings.walletRestore = Date.now() - timings.checkPoint; timings.checkPoint = Date.now();
     
-    const accounts = await wallet.deriveAccounts(nbOfAccounts);
-    if (!accounts) { console.error('Failed to derive addresses.'); return; }
+    const { derivedAccounts, avgIterations } = await wallet.deriveAccounts(nbOfAccounts, 'W');
+    if (!derivedAccounts) { console.error('Failed to derive addresses.'); return; }
     timings.deriveAccounts = Date.now() - timings.checkPoint; timings.checkPoint = Date.now();
     
-    console.log('account0 address: ' + accounts[0].address);
+    console.log('account0 address: ' + derivedAccounts[0].address);
     
     console.log(
 `__Timings -----------------------
 | -- walletRestore: ${timings.walletRestore}ms
 | -- deriveAccounts(${nbOfAccounts}): ${timings.deriveAccounts}ms
 | -- deriveAccountsAvg: ~${timings.deriveAccounts / nbOfAccounts}ms
+| -- deriveAccountAvgIterations: ${avgIterations}
 | -- total: ${Date.now() - timings.startTime}ms
 ---------------------------------`
     );
 
-    nodeSpecificTest(accounts[0].address);
+    nodeSpecificTest(derivedAccounts[0].address);
 }; test();

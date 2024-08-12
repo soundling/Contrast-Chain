@@ -1,3 +1,4 @@
+'use strict';
 import utils from './utils.mjs';
 
 // Node specific imports

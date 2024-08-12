@@ -1,3 +1,4 @@
+'use strict';
 import './ContrastTests.mjs';
 
 // Run simple express server to serve test-front.html

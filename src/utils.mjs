@@ -1,3 +1,4 @@
+'use strict';
 const base58Alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
 const cryptoLib = isNode ? crypto : window.crypto;
@@ -30,7 +31,7 @@ const blockchainSettings = {
 
     blockReward: 25600,
     minBlockReward: 100,
-    halvingInterval: 52960, // 1/5 year at 2 min per block
+    halvingInterval: 529, // 1/5 year at 2 min per block
     maxSupply: 2700000000,
 };
 /*const blockchainSettings = { // Not used ATM
@@ -44,6 +45,14 @@ const blockchainSettings = {
     halvingInterval: 52960, // 1 year at 10 min per block
     maxSupply: 2700000000,
 };*/
+
+const addressSecurityLevelByPrefix = {
+    W: 0,  // Weak - no condition
+    C: 4,  // Contrast standard - 16 times harder to generate ('0' on 4 bits)
+    S: 8,  // Secure - 256 times harder to generate ('0' on 8 bits)
+    P: 12, // Powerful - 4096 times harder to generate ('0' on 12 bits)
+    U: 16  // Ultimate - 65536 times harder to generate ('0' on 16 bits)
+};
 
 const typeValidation = {
     base58(base58) {
@@ -337,6 +346,7 @@ const utils = {
     cryptoLib,
     argon2: argon2Lib,
     blockchainSettings,
+    addressSecurityLevelByPrefix,
     typeValidation,
     convert,
 };

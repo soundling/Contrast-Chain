@@ -1,3 +1,4 @@
+'use strict';
 import etc from './etc.mjs';
 import { Block } from "./classes.mjs";
 
@@ -25,20 +26,27 @@ function loadBlockchainLocally() {
         const blockIndex = blockFilesSorted[i];
         if (i !== blockIndex) { throw new Error('Block index mismatch'); }
 
-        const block = loadBlockLocally(blockIndex);
+        const block = loadBlockLocally(blockIndex, chain[i - 1]);
         chain.push(block);
     }
 
     return chain;
 }
-function loadBlockLocally(blockIndex = 0) {
+/**
+ * @param {number} blockIndex
+ * @param {Block} prevBlock
+ */
+function loadBlockLocally(blockIndex, prevBlock = undefined) {
     const blockIndexStr = blockIndex.toString();
     const blockFileName = `${blockIndexStr}.json`;
     const blockContent = etc.fs.readFileSync(etc.path.join(blocksPath, blockFileName), 'utf8');
     const blockContentObj = JSON.parse(blockContent);
     
-    const block = new Block(blockContentObj.prevHash, blockContentObj.index, blockContentObj.difficulty, blockContentObj.Txs);
-    block.setPowDependentValues(blockContentObj.timestamp, blockContentObj.nonce, blockContentObj.hash);
+    const block = new Block(blockContentObj.difficulty, blockContentObj.Txs, prevBlock);
+    // block.setPowDependentValues(blockContentObj.timestamp, blockContentObj.nonce, blockContentObj.hash); // DEPRECATED
+    block.timestamp = blockContentObj.timestamp;
+    block.nonce = blockContentObj.nonce;
+    block.hash = blockContentObj.hash;
     return block;
 }
 /**
@@ -61,9 +69,9 @@ function saveBlockLocally(block) {
 }
 function saveBlocksDataLocally(blocksData) {
     const blocksDataPath = etc.path.join(powDataPath, 'blocksData.csv');
-    const blocksDataHeader = 'blockIndex,blockReward,timestamp,difficulty,timeBetweenBlocks\n';
+    const blocksDataHeader = 'blockIndex,coinbaseReward,timestamp,difficulty,timeBetweenBlocks\n';
     const blocksDataLines = blocksData.map(data => {
-        return `${data.blockIndex},${data.blockReward},${data.timestamp},${data.difficulty},${data.timeBetweenBlocks}`;
+        return `${data.blockIndex},${data.coinbaseReward},${data.timestamp},${data.difficulty},${data.timeBetweenBlocks}`;
     }).join('\n');
     const blocksDataContent = blocksDataHeader + blocksDataLines;
 
