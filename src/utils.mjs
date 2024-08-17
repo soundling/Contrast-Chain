@@ -38,10 +38,12 @@ const blockchainSettings = {
     maxDiffIncrementPerAdjustment: 8, // 8 diff points = 50% of diff
     blocksBeforeAdjustment: 144, // ~5h
 
-    blockReward: 25_600,
-    minBlockReward: 100,
+    blockReward: 256_000_000,
+    minBlockReward: 1_000_000,
     halvingInterval: 52_960, // 1/5 year at 2 min per block
-    maxSupply: 27_000_000_00, // last 2 zeros are considered as decimals
+    maxSupply: 27_000_000_000_000, // last 2 zeros are considered as decimals
+
+    minTransactionFeePerByte: 1,
 };
 /*const blockchainSettings = { // Not used ATM
     targetBlockTime: 600_000, // 10 min
@@ -76,8 +78,8 @@ const addressUtils = {
      * @param {string} pubKeyHex
      */
     deriveAddress: async (argon2HashFunction, pubKeyHex) => {
-        const hex128 = pubKeyHex.substring(0, 32);
-        const salt = pubKeyHex.substring(32, 64);
+        const hex128 = pubKeyHex.substring(32, 64);
+        const salt = pubKeyHex.substring(0, 32); // use first part as salt because entropy is lower
 
         const argon2hash = await argon2HashFunction(hex128, salt, 1, addressUtils.params.argon2DerivationMemory, 1, 2, addressUtils.params.addressDerivationBytes);
         if (!argon2hash) {
@@ -92,8 +94,9 @@ const addressUtils = {
     },
 
     /** ==> First verification, low computation cost.
+     * 
+     * - Control the length of the address and its first char 
      * @param {string} addressBase58 - Address to validate
-     * @param {string} pubKeyHex - Public key that need to pass the conformity tests
      */
     conformityCheck: (addressBase58) => {
         if (typeof addressBase58 !== 'string') { throw new Error('Invalid address type !== string'); }
@@ -106,7 +109,9 @@ const addressUtils = {
 
         return 'Address conforms to the standard';
     },
-    /** ==> Second verification, low computation cost. (ALWAYS use conformity check first)
+    /** ==> Second verification, low computation cost.
+     * 
+     * ( ALWAYS use conformity check first )
      * @param {string} addressBase58 - Address to validate
      * @param {string} pubKeyHex - Public key to derive the address from
      */
@@ -124,7 +129,10 @@ const addressUtils = {
 
         return 'Address meets the security level requirements';
     },
-    /** ==> Third verification, higher computation cost. (ALWAYS use conformity check first)
+    /** ==> Third verification, higher computation cost.
+     * 
+     * ( ALWAYS use conformity check first )
+     * 
      * - This function uses an Argon2 hash function to perform a hashing operation.
      * @param {HashFunctions} argon2HashFunction
      * @param {string} addressBase58 - Address to validate
@@ -135,12 +143,15 @@ const addressUtils = {
         if (!derivedAddressBase58) { console.error('Failed to derive the address'); return false; }
 
         return addressBase58 === derivedAddressBase58;
-    }
-};
-const transactionsUtils = {
-    types: {
-        coinbase: 'coinbase',
-        transfer: 'transfer',
+    },
+
+    formatAddress: (addressBase58, separator = ('.')) => {
+        if (typeof addressBase58 !== 'string') { return false; }
+        if (typeof separator !== 'string') { return false; }
+
+        // WWRMJagpT6ZK95Mc2cqh => WWRM-Jagp-T6ZK-95Mc-2cqh or WWRM.Jagp.T6ZK.95Mc.2cqh
+        const formated = addressBase58.match(/.{1,4}/g).join(separator);
+        return formated;
     },
 };
 const typeValidation = {
@@ -154,6 +165,22 @@ const typeValidation = {
 		}
 		return base58;
 	},
+    hex(hex) {
+        if (hex.length % 2 !== 0) {
+            console.error('Hex string length is not a multiple of 2');
+            return false;
+        }
+
+        for (let i = 0; i < hex.length; i++) {
+            const char = hex[i];
+            if (isNaN(parseInt(char, 16))) {
+                console.error(`Invalid hex character: ${char}`);
+                return false;
+            }
+        }
+
+        return hex;
+    }
 };
 const convert = {
     base58: {
@@ -311,11 +338,18 @@ const convert = {
         /** @param {number} num - Integer to convert to readable */
         formatNumberAsCurrency: (num) => {
             // 1_000_000 -> 10,000.00
-            if (num < 100) { return `0.${num.toString().padStart(2, '0')}`; }
+            /*if (num < 100) { return `0.${num.toString().padStart(2, '0')}`; }
             const num2last2 = num.toString().slice(-2);
             const numRest = num.toString().slice(0, -2);
             const separedNum = numRest.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-            return `${separedNum}.${num2last2}`;
+            return `${separedNum}.${num2last2}`;*/
+
+            // 1_000_000_000 -> 1,000.000000
+            if (num < 1_000_000) { return `0.${num.toString().padStart(6, '0')}`; }
+            const num2last6 = num.toString().slice(-6);
+            const numRest = num.toString().slice(0, -6);
+            const separedNum = numRest.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+            return `${separedNum}.${num2last6}`;
         },
     },
     uint8Array: {
@@ -585,7 +619,6 @@ const utils = {
     argon2: argon2Lib,
     blockchainSettings,
     addressUtils,
-    transactionsUtils,
     typeValidation,
     convert,
     conditionnals,

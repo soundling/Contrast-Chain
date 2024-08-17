@@ -29,9 +29,9 @@ async function nodeSpecificTest(accounts) {
             const UTXOsJSON = node.hotData.getUTXOsJSON(minerAccount.address); // should be provided by network
             minerAccount.setUTXOsFromJSON(UTXOsJSON);
 
-            const { signedTxJSON, error } = await Transaction_Builder.createAndSignTransferTransaction(minerAccount, 10_000, receiverAccount.address);
+            const { signedTxJSON, error } = await Transaction_Builder.createAndSignTransferTransaction(minerAccount, 1_000_000, receiverAccount.address);
             if (signedTxJSON) {
-                console.log(`SEND: ${minerAccount.address} -> ${receiverAccount.address} 10_000`);
+                console.log(`SEND: ${minerAccount.address} -> ${receiverAccount.address} 1_000_000`);
                 console.log(`_________Pushing transaction_________ ${JSON.parse(signedTxJSON).id.slice(0, 12)}... to mempool.`);
                 node.addTransactionJSONToMemPool(signedTxJSON);
             } else {
@@ -79,7 +79,7 @@ async function test() {
     if (!derivedAccounts) { console.error('Failed to derive addresses.'); return; }
     timings.deriveAccounts = Date.now() - timings.checkPoint; timings.checkPoint = Date.now();
     
-    console.log('account0 address: ' + derivedAccounts[0].address);
+    console.log(`account0 address: [ ${contrast.utils.addressUtils.formatAddress(derivedAccounts[0].address, '.')} ]`);
     
     console.log(
 `__Timings -----------------------

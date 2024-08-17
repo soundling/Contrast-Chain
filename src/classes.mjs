@@ -72,7 +72,7 @@ export class Block {
      * @param {Transaction} coinbaseTx
      */
     static setCoinbaseTransaction(blockData, coinbaseTx) {
-        if (Transaction_Builder.isCoinBaseTransaction(coinbaseTx) === false) { console.error('Invalid coinbase transaction'); return false; }
+        if (Transaction_Builder.isCoinBaseTransaction(coinbaseTx, 0) === false) { console.error('Invalid coinbase transaction'); return false; }
 
         Block.removeExistingCoinbaseTransaction(blockData);
         blockData.Txs.unshift(coinbaseTx);
@@ -82,7 +82,7 @@ export class Block {
         if (blockData.Txs.length === 0) { return; }
 
         const firstTx = blockData.Txs[0];
-        if (firstTx && Transaction_Builder.isCoinBaseTransaction(firstTx)) { blockData.Txs.shift(); }
+        if (firstTx && Transaction_Builder.isCoinBaseTransaction(firstTx, 0)) { blockData.Txs.shift(); }
     }
     /** @param {BlockData} blockData - undefined if genesis block */
     static calculateNextCoinbaseReward(blockData) {
@@ -100,10 +100,7 @@ export class Block {
         const fees = [];
         for (let i = 0; i < blockData.Txs.length; i++) {
             const Tx = blockData.Txs[i];
-            const inputsAmount = Tx.inputs.reduce((a, b) => a + b.amount, 0);
-            const outputsAmount = Tx.outputs.reduce((a, b) => a + b.amount, 0);
-            const fee = inputsAmount - outputsAmount;
-            if (fee < 0) { throw new Error('Negative fee'); }
+            const fee = Validation.calculateRemainingAmount(Tx, Transaction_Builder.isCoinBaseTransaction(Tx, i));
 
             fees.push(fee);
         }
@@ -143,15 +140,11 @@ class TxIO_Scripts {
         }
     }
 
-    /*static unlock = { // THAT DOESN'T EXIST :D
-        transfers: {
-            v1: (address = '', amount = 0) => {
-
-            }
-        }
-    }*/
-    static arrayIncludeDuplicates(array) {
+    static arrayIncludeDuplicates(array) { // is it used ? - preferable to delete
         return (new Set(array)).size !== array.length;
+    }
+
+    static decomposeScriptString(script) {
     }
 }
 
@@ -274,7 +267,7 @@ export class Transaction_Builder {
     static createTransferTransaction(
         UTXOs = [],
         transfers = [ { recipientAddress: 'recipientAddress', amount: 1 } ]
-    ) { 
+    ) {
         if (UTXOs.length === 0) { throw new Error('No UTXO to spend'); }
         if (transfers.length === 0) { throw new Error('No transfer to make'); }
         
@@ -283,7 +276,7 @@ export class Transaction_Builder {
         const { outputs, totalSpent } = Transaction_Builder.buildOutputsFrom(transfers, 'signature_v1', 1);
         const totalInputAmount = UTXOs.reduce((a, b) => a + b.amount, 0);
 
-        const fee = 27; // TODO: calculate the fee
+        const fee = 1_000_000; // TODO: calculate the fee
         const change = totalInputAmount - totalSpent - fee;
         if (change < 0) { 
             throw new Error('Negative change => not enough funds'); 
@@ -330,9 +323,13 @@ export class Transaction_Builder {
         const stringHex = utils.convert.string.toHex(`${nonce}${inputsStr}${outputsStr}`);
         return stringHex;
     }
-    /** @param {Transaction} transaction */
-    static isCoinBaseTransaction(transaction) {
+    /** 
+     * @param {Transaction} transaction
+     * @param {number} TxIndexInTheBlock
+     */
+    static isCoinBaseTransaction(transaction, TxIndexInTheBlock) {
         if (transaction.inputs.length !== 1) { return false; }
+        if (TxIndexInTheBlock !== 0) { return false; }
         return typeof transaction.inputs[0] === 'string';
     }
     /** @param {Transaction} transaction */
@@ -482,28 +479,30 @@ export class Account {
 }
 
 class Validation {
-    /** @param {Transaction} transaction */
-    static isConformTransaction(transaction) {
+    /** ==> First validation, low computation cost.
+     * 
+     * - control format of : amount, address, script, version, TxID
+     * @param {Transaction} transaction
+     * @param {boolean} isCoinBase
+     */
+    static isConformTransaction(transaction, isCoinBase) {
         if (!transaction) { throw new Error('Invalid transaction'); }
         if (typeof transaction.id !== 'string') { throw new Error('Invalid transaction ID'); }
         if (!Array.isArray(transaction.inputs)) { throw new Error('Invalid transaction inputs'); }
         if (!Array.isArray(transaction.outputs)) { throw new Error('Invalid transaction outputs'); }
         if (!Array.isArray(transaction.witnesses)) { throw new Error('Invalid transaction witnesses'); }
 
-        const isCoinBaseTransaction = Transaction_Builder.isCoinBaseTransaction(transaction);
-        //const isIncriptionTransaction = Transaction_Builder.isIncriptionTransaction(transaction);
-
         for (let i = 0; i < transaction.inputs.length; i++) {
-            if (isCoinBaseTransaction) { continue; } // coinbase -> no input
+            if (isCoinBase) { continue; } // coinbase -> no input
             Validation.isValidTransactionIO(transaction.inputs[i]);
         }
 
         for (let i = 0; i < transaction.outputs.length; i++) {
-            const TxID_Check = isCoinBaseTransaction // not coinbase -> output not linked to TxID
+            const TxID_Check = isCoinBase // not coinbase -> output not linked to TxID
             Validation.isValidTransactionIO(transaction.outputs[i], TxID_Check);
         }
     }
-    /**
+    /** Used by isConformTransaction()
      * @param {TransactionIO} TxIO - transaction input/output
      * @param {boolean} TxID_Check - check if the TxID is present and valid
      */
@@ -520,19 +519,56 @@ class Validation {
         utils.addressUtils.conformityCheck(TxIO.address);
     }
 
-    /** @param {Transaction} transaction */
-    static async executeTransactionInputsScripts(transaction) {
-        const opAlreadyPassed = [];
+    /** ==> Second validation, low computation cost.
+     * 
+     * - control : input > output
+     * 
+     * - control the fee > 0 or = 0 for coinbase
+     * @param {Transaction} transaction
+     * @param {boolean} isCoinbaseTx
+     * @returns {number} - the fee
+     */
+    static calculateRemainingAmount(transaction, isCoinbaseTx) {
+        const inputsAmount = transaction.inputs.reduce((a, b) => a + b.amount, 0);
+        const outputsAmount = transaction.outputs.reduce((a, b) => a + b.amount, 0);
+        const fee = inputsAmount - outputsAmount;
+        if (fee < 0) { throw new Error('Negative transaction'); }
+        if (isCoinbaseTx && fee !== 0) { throw new Error('Invalid coinbase transaction'); }
+        if (!isCoinbaseTx && fee === 0) { throw new Error('Invalid transaction: fee = 0'); }
 
+        return fee;
+    }
+
+    /** ==> Third validation, medium computation cost.
+     * 
+     * - control the transaction hash (SHA256)
+     * @param {Transaction} transaction
+     */
+    static async controlTransactionHash(transaction) {
+        const message = Transaction_Builder.getTransactionStringToHash(transaction);
+        const hash = await HashFunctions.SHA256(message);
+        if (hash !== transaction.id) { throw new Error('Invalid transaction hash'); }
+    }
+
+    /** ==> Fourth validation, medium computation cost.
+     * 
+     * - control the signature of the inputs
+     * @param {Transaction} transaction
+     */
+    static async executeTransactionInputsScripts(transaction) {
+        //const addresses = transaction.inputs.map(input => input.address);
+        
         // TODO: ADAPT THE LOGIC FOR MULTI WITNESS
+        const opAlreadyPassed = [];
         const witnessParts = transaction.witnesses[0].split(' ');
         const signature = witnessParts[0];
         const pubKeyHex = witnessParts[1];
 
         for (let i = 0; i < transaction.inputs.length; i++) {
+            //const input = transaction.inputs[i];
             const { address, script } = transaction.inputs[i];
             const operation = `${address}${script}`;
-            if (opAlreadyPassed.includes(operation)) { 
+            if (opAlreadyPassed.includes(operation)) {
                 continue; }
 
             utils.addressUtils.conformityCheck(address);
@@ -540,14 +576,10 @@ class Validation {
             
             const message = Transaction_Builder.getTransactionStringToHash(transaction);
             Validation.executeTransactionInputScripts(script, signature, message, pubKeyHex);
-            
-            const addressOwnershipConfirmed = await utils.addressUtils.derivationCheck(HashFunctions.Argon2, address, pubKeyHex);
-            if (!addressOwnershipConfirmed) { throw new Error('Invalid address<->pubKey correspancy'); }
 
             opAlreadyPassed.push(operation);
         }
     }
-
     /** // TODO: TRANSFORM SCRIPT LOGIC TO HUMAN READABLE LOGIC -> INPUT LOOKS LIKE : BY:ADDRESS-SIG:SIGNATURE-PUB:pubKeyHex ?
      * @param {string} script
      * @param {string} address
@@ -560,6 +592,34 @@ class Validation {
 
         const addressOwnedByPubKey = scriptFunction(signature, message, pubKeyHex);
         if (!addressOwnedByPubKey) { throw new Error('Invalid signature<->pubKey correspancy'); }
+    }
+
+    /** ==> Fifth validation, high computation cost.
+     * 
+     * - control the address/pubKey correspondence
+     * @param {Transaction} transaction
+     */
+    static async addressOwnershipConfirmation(transaction) {
+        const witnessesAddresses = [];
+        const alreadyKnownAddresses = [];
+
+        // derive witnesses addresses
+        for (let i = 0; i < transaction.witnesses.length; i++) {
+            const witnessParts = transaction.witnesses[i].split(' ');
+            const pubKeyHex = witnessParts[1];
+            const derivedAddressBase58 = await utils.addressUtils.deriveAddress(HashFunctions.Argon2, pubKeyHex);
+            if (witnessesAddresses.includes(derivedAddressBase58)) { throw new Error('Duplicate witness'); }
+
+            witnessesAddresses.push(derivedAddressBase58);
+        }
+
+        // control the input addresses presence in the witnesses
+        for (let i = 0; i < transaction.inputs.length; i++) {
+            const { address } = transaction.inputs[i];
+            if (witnessesAddresses.includes(address) === false) { throw new Error(`Witness missing for address: ${utils.addressUtils.formatAddress(address)}`); }
+
+            alreadyKnownAddresses.push(address);
+        }
     }
 }
 class MemPool {
@@ -595,12 +655,25 @@ class MemPool {
     /** @param {Transaction} transaction */
     async pushTransaction(transaction) {
         const startTime = Date.now();
-        Validation.isConformTransaction(transaction);
-
         if (this.transactions.map(tx => tx.id).includes(transaction.id)) { throw new Error('Transaction already in mempool'); }
+        
+        const isCoinBase = false;
 
-        // TODO: verify the transaction
+        // First control format of : amount, address, script, version, TxID
+        Validation.isConformTransaction(transaction, isCoinBase);
+
+        // Second control : input > output
+        const fee = Validation.calculateRemainingAmount(transaction, isCoinBase);
+
+        // Third validation: medium computation cost.
+        await Validation.controlTransactionHash(transaction);
+
+        // Fourth validation: medium computation cost.
         await Validation.executeTransactionInputsScripts(transaction);
+
+        // Fifth validation: high computation cost.
+        await Validation.addressOwnershipConfirmation(transaction);
+
         // Time passed we need to recheck before pushing the transaction
         if (this.transactions.map(tx => tx.id).includes(transaction.id)) { throw new Error('Transaction already in mempool'); }
 
@@ -652,7 +725,7 @@ class HotData { // Used to store, addresses's UTXOs and balance.
 
         for (let i = 0; i < Txs.length; i++) {
             const transaction = Txs[i];
-            this.#digestTransactionInputs(transaction);
+            this.#digestTransactionInputs(transaction, i);
             this.#digestTransactionOutputs(transaction);
         }
 
@@ -661,7 +734,7 @@ class HotData { // Used to store, addresses's UTXOs and balance.
         const address = Txs[0].outputs[0].address;
         const remainingUTXOs = this.addressUTXOs[address] ? this.addressUTXOs[address].length : 0;
         const balance = this.addressBalances[address] ? this.addressBalances[address] : 0;
-        console.log(`remaining UTXOs for ${address}: ${remainingUTXOs} - balance: ${utils.convert.number.formatNumberAsCurrency(balance)}`);
+        console.log(`remaining UTXOs for [ ${utils.addressUtils.formatAddress(address, '.')} ] ${remainingUTXOs} utxos - balance: ${utils.convert.number.formatNumberAsCurrency(balance)}`);
     }
     /**
      * Will add or remove the amount from the address balance
@@ -676,9 +749,12 @@ class HotData { // Used to store, addresses's UTXOs and balance.
         this.addressBalances[address] += amount;
         // console.log(`Balance of ${address} changed by ${amount} => ${this.addressBalances[address]}`);
     }
-    /** @param {Transaction} transaction */
-    #digestTransactionInputs(transaction) {
-        if ( Transaction_Builder.isCoinBaseTransaction(transaction) ) { return } // coinbase -> no input
+    /**
+     * @param {Transaction} transaction 
+     * @param {number} TxIndexInTheBlock
+     */
+    #digestTransactionInputs(transaction, TxIndexInTheBlock) {
+        if ( Transaction_Builder.isCoinBaseTransaction(transaction, TxIndexInTheBlock) ) { return } // coinbase -> no input
 
         const TxInputs = transaction.inputs;
         for (let i = 0; i < TxInputs.length; i++) {
@@ -776,7 +852,7 @@ export class FullNode {
         const saveResult = storage.saveBlockDataLocally(blockCandidate, 'bin');
         if (!saveResult.success) { throw new Error(saveResult.message); }
 
-        //TODO : fill hot data
+        //TODO : VALIDATE THE BLOCK BEFORE PUSHING IT !!
         this.chain.push(blockCandidate);
         this.hotData.digestBlock(blockCandidate);
         this.memPool.digestBlockTransactions(blockCandidate.Txs);
