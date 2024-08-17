@@ -1,4 +1,13 @@
 'use strict';
+
+import ed25519 from './noble-ed25519-03-2024.mjs';
+/**
+* @typedef {import("./classes.mjs").Block} Block
+* @typedef {import("./classes.mjs").AddressTypeInfo} AddressTypeInfo
+* @typedef {import("./classes.mjs").Transaction} Transaction
+* @typedef {import("./conCrypto.mjs").argon2Hash} HashFunctions
+*/
+
 const base58Alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
 const cryptoLib = isNode ? crypto : window.crypto;
@@ -24,36 +33,116 @@ async function getArgon2Lib() {
 const argon2Lib = await getArgon2Lib();
 
 const blockchainSettings = {
-    targetBlockTime: 2000, // 2 sec ||| // 120000, // 2 min
+    targetBlockTime: 2_000, // 2 sec ||| // 120000, // 2 min
     thresholdPerDiffIncrement: 10, // meaning 10% threshold for 1 diff point
     maxDiffIncrementPerAdjustment: 8, // 8 diff points = 50% of diff
     blocksBeforeAdjustment: 144, // ~5h
 
-    blockReward: 25600,
+    blockReward: 25_600,
     minBlockReward: 100,
-    halvingInterval: 529, // 1/5 year at 2 min per block
-    maxSupply: 2700000000,
+    halvingInterval: 52_960, // 1/5 year at 2 min per block
+    maxSupply: 27_000_000_00, // last 2 zeros are considered as decimals
 };
 /*const blockchainSettings = { // Not used ATM
-    targetBlockTime: 600000, // 10 min
+    targetBlockTime: 600_000, // 10 min
     thresholdPerDiffIncrement: 10, // meaning 10% threshold for 1 diff point
     maxDiffIncrementPerAdjustment: 8, // 8 diff points = 50% of diff
     blocksBeforeAdjustment: 144, // ~24h
 
-    blockReward: 25600,
+    blockReward: 25_600,
     minBlockReward: 100,
-    halvingInterval: 52960, // 1 year at 10 min per block
-    maxSupply: 2700000000,
+    halvingInterval: 52_960, // 1 year at 10 min per block
+    maxSupply: 27_000_000_00, // last 2 zeros are considered as decimals
+};
 };*/
 
-const addressSecurityLevelByPrefix = {
-    W: 0,  // Weak - no condition
-    C: 4,  // Contrast standard - 16 times harder to generate ('0' on 4 bits)
-    S: 8,  // Secure - 256 times harder to generate ('0' on 8 bits)
-    P: 12, // Powerful - 4096 times harder to generate ('0' on 12 bits)
-    U: 16  // Ultimate - 65536 times harder to generate ('0' on 16 bits)
-};
+const addressUtils = {
+    params: {
+        argon2DerivationMemory: 2**16,
+        addressDerivationBytes: 16, // the hex return will be double this value
+        addressBase58Length: 20,
+    },
+    glossary: {
+        W: { name: 'Weak', description: 'No condition', zeroBits: 0, nbOfSigners: 1 },
+        C: { name: 'Contrast', description: '16 times harder to generate', zeroBits: 4, nbOfSigners: 1 },
+        S: { name: 'Secure', description: '256 times harder to generate', zeroBits: 8, nbOfSigners: 1 },
+        P: { name: 'Powerful', description: '4096 times harder to generate', zeroBits: 12, nbOfSigners: 1 },
+        U: { name: 'Ultimate', description: '65536 times harder to generate', zeroBits: 16, nbOfSigners: 1 },
+    },
 
+    /**
+     * This function uses an Argon2 hash function to perform a hashing operation.
+     * @param {HashFunctions} argon2HashFunction
+     * @param {string} pubKeyHex
+     */
+    deriveAddress: async (argon2HashFunction, pubKeyHex) => {
+        const hex128 = pubKeyHex.substring(0, 32);
+        const salt = pubKeyHex.substring(32, 64);
+
+        const argon2hash = await argon2HashFunction(hex128, salt, 1, addressUtils.params.argon2DerivationMemory, 1, 2, addressUtils.params.addressDerivationBytes);
+        if (!argon2hash) {
+            console.error('Failed to hash the SHA-512 pubKeyHex');
+            return false;
+        }
+        
+        const hex = argon2hash.hex;
+        const addressBase58 = utils.convert.hex.toBase58(hex).substring(0, 20);
+        
+        return addressBase58;
+    },
+
+    /** ==> First verification, low computation cost.
+     * @param {string} addressBase58 - Address to validate
+     * @param {string} pubKeyHex - Public key that need to pass the conformity tests
+     */
+    conformityCheck: (addressBase58) => {
+        if (typeof addressBase58 !== 'string') { throw new Error('Invalid address type !== string'); }
+        if (addressBase58.length !== 20) { throw new Error('Invalid address length !== 20'); }
+
+        const firstChar = addressBase58.substring(0, 1);
+        /** @type {AddressTypeInfo} */
+        const addressTypeInfo = addressUtils.glossary[firstChar];
+        if (addressTypeInfo === undefined) { throw new Error(`Invalid address firstChar: ${firstChar}`); }
+
+        return 'Address conforms to the standard';
+    },
+    /** ==> Second verification, low computation cost. (ALWAYS use conformity check first)
+     * @param {string} addressBase58 - Address to validate
+     * @param {string} pubKeyHex - Public key to derive the address from
+     */
+    securityCheck: (addressBase58, pubKeyHex = '') => {
+        const firstChar = addressBase58.substring(0, 1);
+        /** @type {AddressTypeInfo} */
+        const addressTypeInfo = addressUtils.glossary[firstChar];
+        if (addressTypeInfo === undefined) { throw new Error(`Invalid address firstChar: ${firstChar}`); }
+
+        const bitsArray = convert.hex.toBits(pubKeyHex);
+        if (!bitsArray) { throw new Error('Failed to convert the public key to bits'); }
+
+        const condition = conditionnals.binaryStringStartsWithZeros(bitsArray.join(''), addressTypeInfo.zeroBits);
+        if (!condition) { throw new Error(`Address does not meet the security level ${addressTypeInfo.zeroBits} requirements`); }
+
+        return 'Address meets the security level requirements';
+    },
+    /** ==> Third verification, higher computation cost. (ALWAYS use conformity check first)
+     * - This function uses an Argon2 hash function to perform a hashing operation.
+     * @param {HashFunctions} argon2HashFunction
+     * @param {string} addressBase58 - Address to validate
+     * @param {string} pubKeyHex - Public key to derive the address from
+     */
+    derivationCheck: async (argon2HashFunction, addressBase58, pubKeyHex = '') => {
+        const derivedAddressBase58 = await addressUtils.deriveAddress(argon2HashFunction, pubKeyHex);
+        if (!derivedAddressBase58) { console.error('Failed to derive the address'); return false; }
+
+        return addressBase58 === derivedAddressBase58;
+    }
+};
+const transactionsUtils = {
+    types: {
+        coinbase: 'coinbase',
+        transfer: 'transfer',
+    },
+};
 const typeValidation = {
     base58(base58) {
 		for (let i = 0; i < base58.length; i++) {
@@ -66,7 +155,6 @@ const typeValidation = {
 		return base58;
 	},
 };
-
 const convert = {
     base58: {
         /** @param {string} base58 - Base58 string to convert to base64 */
@@ -219,7 +307,16 @@ const convert = {
         /** @param {number} num - Integer to convert to BigInt */
         toBigInt: (num) => {
             return BigInt(num);
-        }
+        },
+        /** @param {number} num - Integer to convert to readable */
+        formatNumberAsCurrency: (num) => {
+            // 1_000_000 -> 10,000.00
+            if (num < 100) { return `0.${num.toString().padStart(2, '0')}`; }
+            const num2last2 = num.toString().slice(-2);
+            const numRest = num.toString().slice(0, -2);
+            const separedNum = numRest.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+            return `${separedNum}.${num2last2}`;
+        },
     },
     uint8Array: {
         /** @param {Uint8Array} uint8Array - Uint8Array to convert to base58 */
@@ -339,16 +436,160 @@ const convert = {
         },
     },
 };
+const conditionnals = {
+    /**
+     * Check if the string starts with a certain amount of zeros
+     * @param {string} string 
+     * @param {number} zeros
+     */
+    binaryStringStartsWithZeros: (string, zeros) => {
+        if (typeof string !== 'string') { return false; }
+        if (typeof zeros !== 'number') { return false; }
+        if (zeros < 0) { return false; }
+
+        const target = '0'.repeat(zeros);
+        return string.startsWith(target);
+    },
+
+    /**
+     * Check if the string as binary is superior or equal to the target
+     * @param {string} string 
+     * @param {number} minValue 
+     */
+    binaryStringSupOrEqual: (string = '', minValue = 0) => {
+        if (typeof string !== 'string') { return false; }
+        if (typeof minValue !== 'number') { return false; }
+        if (minValue < 0) { return false; }
+
+        const intValue = parseInt(string, 2);
+        return intValue >= minValue;
+    },
+};
+
+const miningParams = {
+    argon2: {
+        time: 1,
+        mem: 2**18,
+        parallelism: 1,
+        type: 2,
+        hashLen: 32,
+    },
+    minNonceHexLength: 8,
+}
+const mining = {
+    /**
+    * @param {Block[]} chain
+    * @returns {number} - New difficulty
+    */
+    difficultyAdjustment: (chain, logs = true) => {
+        const lastBlock = chain[chain.length - 1];
+        const blockIndex = lastBlock.index;
+        const difficulty = lastBlock.difficulty;
+
+        if (typeof difficulty !== 'number') { console.error('Invalid difficulty'); return 1; }
+        if (difficulty < 1) { console.error('Invalid difficulty < 1'); return 1; }
+
+        if (typeof blockIndex !== 'number') { console.error('Invalid blockIndex'); return difficulty; }
+        if (blockIndex === 0) { return difficulty; }
+
+        const modulus = blockIndex % blockchainSettings.blocksBeforeAdjustment;
+        if (modulus !== 0) { return difficulty; }
+
+        const averageBlockTimeMS = mining.getAverageBlockTime(chain);
+        const deviation = 1 - (averageBlockTimeMS / blockchainSettings.targetBlockTime);
+        const deviationPercentage = deviation * 100; // over zero = too fast / under zero = too slow
+
+        if (logs) {
+            console.log(`BlockIndex: ${blockIndex} | Average block time: ${Math.round(averageBlockTimeMS)}ms`);
+            console.log(`Deviation: ${deviation.toFixed(4)} | Deviation percentage: ${deviationPercentage.toFixed(2)}%`);
+        }
+
+        const diffAdjustment = Math.floor(Math.abs(deviationPercentage) / blockchainSettings.thresholdPerDiffIncrement);
+        const capedDiffIncrement = Math.min(diffAdjustment, blockchainSettings.maxDiffIncrementPerAdjustment);
+        const diffIncrement = deviation > 0 ? capedDiffIncrement : -capedDiffIncrement;
+        const newDifficulty = Math.max(difficulty + diffIncrement, 1); // cap at 1 minimum
+
+        if (logs) {
+            const state = diffIncrement === 0 ? 'maintained' : diffIncrement > 0 ? 'increased' : 'decreased';
+            console.log(`Difficulty ${state} ${state !== 'maintained' ? "by: " + diffIncrement + " => " : ""}${state === 'maintained' ? 'at' : 'to'}: ${newDifficulty}`);
+        }
+
+        return newDifficulty;
+    },
+
+    /** @param {Block[]} chain */
+    getAverageBlockTime: (chain) => {
+        const NbBlocks = Math.min(chain.length, blockchainSettings.blocksBeforeAdjustment);
+        const olderBlock = chain[chain.length - NbBlocks];
+        const newerBlock = chain[chain.length - 1];
+        const sum = newerBlock.timestamp - olderBlock.timestamp
+
+        return sum / (NbBlocks - 1);
+    },
+
+    generateRandomNonce: (length = miningParams.minNonceHexLength) => {
+        const Uint8 = new Uint8Array(length);
+        crypto.getRandomValues(Uint8);
+    
+        const Hex = Array.from(Uint8).map(b => b.toString(16).padStart(2, '0')).join('');
+    
+        return { Uint8, Hex };
+    },
+
+    /**
+     * This function uses an Argon2 hash function to perform a hashing operation.
+     * The Argon2 hash function must follow the following signature:
+     * - argon2HashFunction(pass, salt, time, mem, parallelism, type, hashLen)
+     * 
+     *@param {function(string, string, number=, number=, number=, number=, number=): Promise<false | { encoded: string, hash: Uint8Array, hex: string, bitsArray: number[] }>} argon2HashFunction
+     *@param {string} blockSignature - Block signature to hash
+     *@param {string} nonce - Nonce to hash
+    */
+    hashBlockSignature: async (argon2HashFunction, blockSignature = '', nonce = '') => {
+        const { time, mem, parallelism, type, hashLen } = miningParams.argon2;
+        const newBlockHash = await argon2HashFunction(blockSignature, nonce, time, mem, parallelism, type, hashLen);
+        if (!newBlockHash) { return false; }
+        
+        return newBlockHash;
+    },
+
+    getDiffAndAdjust: (difficulty = 1) => {
+        const zeros = Math.floor(difficulty / 16);
+        const adjust = difficulty % 16;
+        return { zeros, adjust };
+    },
+
+    verifyBlockHashConformToDifficulty: (HashBitsAsString = '', difficulty = 1) => {
+        if (typeof HashBitsAsString !== 'string') { throw new Error('Invalid HashBitsAsString'); }
+        if (typeof difficulty !== 'number') { throw new Error('Invalid difficulty type'); }
+
+        if (difficulty < 1) { throw new Error('Invalid difficulty < 1'); }
+        if (difficulty > HashBitsAsString.length) { throw new Error('Invalid difficulty > HashBitsAsString.length'); }
+
+        const { zeros, adjust } = mining.getDiffAndAdjust(difficulty);
+    
+        const condition1 = conditionnals.binaryStringStartsWithZeros(HashBitsAsString, zeros);
+        if (!condition1) { throw new Error(`unlucky--(condition 1)=> hash does not start with ${zeros} zeros`); }
+    
+        const next5Bits = HashBitsAsString.substring(zeros, zeros + 5);
+        const condition2 = conditionnals.binaryStringSupOrEqual(next5Bits, adjust);
+        if (!condition2) { throw new Error(`unlucky--(condition 2)=> hash does not meet the condition: ${next5Bits} >= ${adjust}`); }
+    }
+};
 
 const utils = {
+    ed25519,
     base58Alphabet,
     isNode,
     cryptoLib,
     argon2: argon2Lib,
     blockchainSettings,
-    addressSecurityLevelByPrefix,
+    addressUtils,
+    transactionsUtils,
     typeValidation,
     convert,
+    conditionnals,
+    mining,
 };
 
 export default utils;
