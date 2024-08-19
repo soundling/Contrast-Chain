@@ -1,5 +1,5 @@
 'use strict';
-import { Transaction_Builder } from './src/classes.mjs';
+import { Transaction_Builder } from './src/Transaction.mjs';
 import contrast from './src/contrast.mjs';
 /**
 * @typedef {import("./src/classes.mjs").Account} Account

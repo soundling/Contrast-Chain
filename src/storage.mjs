@@ -4,8 +4,10 @@ import Compressor from './gzip.min.js';
 import Decompressor from './gunzip.min.js';
 
 import msgpack from './msgpack.min.js';
-import { BlockData, Block } from "./classes.mjs";
 import etc from './etc.mjs';
+import { BlockData, Block, Wallet, Account, FullNode, LightNode, Miner, Transaction_Builder } from './index.mjs';
+
+
 
 const powDataPath = etc.path ? etc.path.join(etc.__dirname, 'powData') : null;
 const blocksPath = etc.path ? etc.path.join(powDataPath, 'blocks') : null;
